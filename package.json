@@ -1,0 +1,25 @@
+{
+  "name": "tiktoklive",
+  "version": "1.0.0",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "npx concurrently \"vite\" \"electron .\"",
+    "build": "electron-builder"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "tiktok-live-connector": "^2.0.7-alpha2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.0",
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12",
+    "vite": "^7.1.0"
+  }
+}
