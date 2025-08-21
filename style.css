@@ -1,0 +1,23 @@
+--- a/style.css
++++ b/style.css
+@@ .pinned-item {
+-  padding: 0.5rem 1rem;
++  padding: 0.5rem 2.5rem 0.5rem 0.5rem; /* room for copy icon */
+   border-bottom: 1px solid #ddd;
+   display: flex;
+   align-items: center;
+@@ .copy-icon {
+-  font-size: 1rem;
+-  opacity: 0.6;
++  position: absolute;
++  right: 0.5rem;
++  font-size: 1.1rem;
++  opacity: 0.7;
+   cursor: pointer;
+   user-select: none;
+ }
+
+ .copy-icon:hover {
+-  opacity: 0.8;
++  opacity: 1;
+ }
