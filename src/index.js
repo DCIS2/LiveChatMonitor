@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { TikTokLiveConnection } = require('tiktok-live-connector');
 
+
 let connections = {};
 let buffers = {};
 
