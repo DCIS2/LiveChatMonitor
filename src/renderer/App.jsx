@@ -14,20 +14,30 @@ export default function App() {
   const toggleTheme = () =>
     setTheme(t => (t === 'dark' ? 'light' : 'dark'));
 
-  // 1) Handle incoming events
+  // Cleanly stop the Electron monitor when the window unloads or React unmounts
+  useEffect(() => {
+    const stopElectronMonitor = () => {
+      if (window.electronAPI?.stopMonitor) {
+        window.electronAPI.stopMonitor();
+      }
+    };
+
+    window.addEventListener('beforeunload', stopElectronMonitor);
+    return () => {
+      window.removeEventListener('beforeunload', stopElectronMonitor);
+      stopElectronMonitor();
+    };
+  }, []);
+
+  // Handle incoming events
   useEffect(() => {
     const handleNewEvent = ({ username, msg }) => {
       if (paused) {
-        // paused: stash in pause-buffer
         setBuffer(b => [...b, msg]);
-      }
-      else if (slowMode) {
-        // slowMode on: queue into slowBuffer
+      } else if (slowMode) {
         setSlowBuffer(q => [...q, msg]);
-      }
-      else {
-        // normal speed: render immediately
-        setEvents(ev => [...ev, msg]);
+      } else {
+        setEvents(e => [...e, msg]);
         scrollToBottom();
       }
     };
@@ -37,20 +47,18 @@ export default function App() {
     return () => window.electronAPI.removeNewEventListener();
   }, [paused, slowMode]);
 
-  // 2) If slowMode is on and slowBuffer has items, drip them out every up to 3.25s
+  // Drip slowBuffer into events at up to 3.25s intervals
   useEffect(() => {
     if (!slowMode || slowBuffer.length === 0) return;
-
     const timer = setTimeout(() => {
       const next = slowBuffer[0];
-      setEvents(ev => {
-        const updated = [...ev, next];
+      setEvents(e => {
+        const updated = [...e, next];
         scrollToBottom();
         return updated;
       });
       setSlowBuffer(q => q.slice(1));
     }, 3250);
-
     return () => clearTimeout(timer);
   }, [slowBuffer, slowMode]);
 
@@ -63,6 +71,7 @@ export default function App() {
   };
 
   const startMonitoring = () => {
+    // reset everything
     setEvents([]);
     setBuffer([]);
     setSlowBuffer([]);
@@ -74,8 +83,7 @@ export default function App() {
 
   const togglePause = () => {
     if (paused) {
-      // resuming: flush pause-buffer
-      setEvents(ev => [...ev, ...buffer]);
+      setEvents(e => [...e, ...buffer]);
       setBuffer([]);
       scrollToBottom();
     }
@@ -85,8 +93,8 @@ export default function App() {
   const toggleSlowMode = () => {
     setSlowMode(on => {
       if (on) {
-        // turning OFF slow mode → flush any queued items at once
-        setEvents(ev => [...ev, ...slowBuffer]);
+        // flush queued messages
+        setEvents(e => [...e, ...slowBuffer]);
         setSlowBuffer([]);
         scrollToBottom();
       }
@@ -94,7 +102,7 @@ export default function App() {
     });
   };
 
-  // pin/unpin logic unchanged
+  // Toggle pin/unpin for multiple items
   const pinComment = (msg, index) => {
     setPinnedItems(prev => {
       const exists = prev.some(x => x.index === index);
@@ -105,7 +113,7 @@ export default function App() {
 
   const formatEvent = e => {
     const name = e.nickname || e.user?.nickname || 'Unknown';
-    const id   = e.uniqueId || e.user?.uniqueId   || 'Unknown';
+    const id   = e.uniqueId || e.user?.uniqueId    || 'Unknown';
     if (e.comment) return `${id} | ${name} | ${e.comment}`;
     if (e.common?.describe)
       return `${id} | ${name} | sent "${e.common.describe}"`;
@@ -157,7 +165,7 @@ export default function App() {
           {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
         </button>
 
-        {/* Pinned Items + Copy Button */}
+        {/* PINNED ITEMS + COPY */}
         {pinnedItems.length > 0 && (
           <div
             style={{
@@ -179,7 +187,6 @@ export default function App() {
                   gap:             '0.5rem'
                 }}
               >
-                {/* Unpin */}
                 <button
                   onClick={() =>
                     setPinnedItems(prev =>
@@ -199,10 +206,8 @@ export default function App() {
                   <span className="material-icons">close</span>
                 </button>
 
-                {/* Pinned Text */}
                 <span>{formatEvent(pin.data)}</span>
 
-                {/* Copy */}
                 <button
                   onClick={() =>
                     navigator.clipboard.writeText(formatEvent(pin.data))
@@ -274,7 +279,7 @@ export default function App() {
                         color:      isPinned ? '#f39c12' : '#3498db',
                         fontSize:   '20px',
                         transform:  isPinned ? 'rotate(45deg)' : 'none',
-                        transition: 'transform 0.2s ease, color 0.2s ease'
+                        transition:'transform 0.2s ease, color 0.2s ease'
                       }}
                     >
                       <span className="material-icons">push_pin</span>
