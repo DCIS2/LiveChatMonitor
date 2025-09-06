@@ -9,19 +9,27 @@ export default function App() {
   const [pinnedItems, setPinnedItems] = useState([]);
   const [slowMode, setSlowMode]       = useState(false);
   const [slowBuffer, setSlowBuffer]   = useState([]);
-  const scrollRef                      = useRef(null);
+  const [showPinsDialog, setShowPinsDialog] = useState(false);
+  const [userClosedDialog, setUserClosedDialog] = useState(false);
+  const [dialogPosition, setDialogPosition] = useState({ x: 100, y: 100 });
+  const dragRef = useRef(null);
+
+  const [filters, setFilters]         = useState({
+    comment: true,
+    gift: true,
+    subscription: true
+  });
+  const scrollRef = useRef(null);
 
   const toggleTheme = () =>
     setTheme(t => (t === 'dark' ? 'light' : 'dark'));
 
-  // Cleanly stop the Electron monitor when the window unloads or React unmounts
   useEffect(() => {
     const stopElectronMonitor = () => {
       if (window.electronAPI?.stopMonitor) {
         window.electronAPI.stopMonitor();
       }
     };
-
     window.addEventListener('beforeunload', stopElectronMonitor);
     return () => {
       window.removeEventListener('beforeunload', stopElectronMonitor);
@@ -29,7 +37,6 @@ export default function App() {
     };
   }, []);
 
-  // Handle incoming events
   useEffect(() => {
     const handleNewEvent = ({ username, msg }) => {
       if (paused) {
@@ -41,13 +48,11 @@ export default function App() {
         scrollToBottom();
       }
     };
-
     window.electronAPI.removeNewEventListener();
     window.electronAPI.onNewEvent(handleNewEvent);
     return () => window.electronAPI.removeNewEventListener();
   }, [paused, slowMode]);
 
-  // Drip slowBuffer into events at up to 3.25s intervals
   useEffect(() => {
     if (!slowMode || slowBuffer.length === 0) return;
     const timer = setTimeout(() => {
@@ -58,9 +63,43 @@ export default function App() {
         return updated;
       });
       setSlowBuffer(q => q.slice(1));
-    }, 3250);
+    }, 4000);
     return () => clearTimeout(timer);
   }, [slowBuffer, slowMode]);
+
+	useEffect(() => {
+	  if (pinnedItems.length > 0 && !showPinsDialog && !userClosedDialog) {
+		setShowPinsDialog(true);
+	  }
+	  if (pinnedItems.length === 0 && showPinsDialog) {
+		setShowPinsDialog(false);
+		setUserClosedDialog(false); // reset so next pin can reopen
+	  }
+	}, [pinnedItems, showPinsDialog, userClosedDialog]);
+
+useEffect(() => {
+  const handleMouseMove = (e) => {
+    if (dragRef.current) {
+      setDialogPosition((prev) => ({
+        x: prev.x + e.movementX,
+        y: prev.y + e.movementY
+      }));
+    }
+  };
+
+  const handleMouseUp = () => {
+    dragRef.current = null;
+  };
+
+  window.addEventListener('mousemove', handleMouseMove);
+  window.addEventListener('mouseup', handleMouseUp);
+  return () => {
+    window.removeEventListener('mousemove', handleMouseMove);
+    window.removeEventListener('mouseup', handleMouseUp);
+  };
+}, []);
+
+
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -71,7 +110,6 @@ export default function App() {
   };
 
   const startMonitoring = () => {
-    // reset everything
     setEvents([]);
     setBuffer([]);
     setSlowBuffer([]);
@@ -93,7 +131,6 @@ export default function App() {
   const toggleSlowMode = () => {
     setSlowMode(on => {
       if (on) {
-        // flush queued messages
         setEvents(e => [...e, ...slowBuffer]);
         setSlowBuffer([]);
         scrollToBottom();
@@ -102,46 +139,91 @@ export default function App() {
     });
   };
 
-  // Toggle pin/unpin for multiple items
-  const pinComment = (msg, index) => {
-    setPinnedItems(prev => {
-      const exists = prev.some(x => x.index === index);
-      if (exists) return prev.filter(x => x.index !== index);
-      return [...prev, { index, data: msg.data }];
-    });
+const pinComment = (msg, index) => {
+  setPinnedItems(prev => {
+    const exists = prev.some(x => x.index === index);
+    const updated = exists
+      ? prev.filter(x => x.index !== index)
+      : [...prev, { index, event: msg }];
+
+    if (!exists) {
+      setUserClosedDialog(false); // ✅ Reset manual close flag
+
+      // ✅ Trigger floating dialog if this is the first pin
+      if (prev.length === 0) {
+        window.electronAPI?.openPinnedDialog?.();
+      }
+    }
+
+    return updated;
+  });
+};
+
+
+
+
+  const getEventType = e => {
+    const type = e.type?.toLowerCase();
+    if (type === 'subscription') return 'subscription';
+    if (type === 'gift') return 'gift';
+    if (type === 'comment') return 'comment';
+
+    const comment = e.comment || e.data?.comment || '';
+    const describe = e.common?.describe || e.data?.common?.describe || '';
+    const text = `${comment} ${describe}`.toLowerCase();
+
+    if (
+      text.includes('subscribed') ||
+      text.includes('became a member') ||
+      text.includes('joined') ||
+      text.includes('is now a subscriber')
+    ) {
+      return 'subscription';
+    }
+
+    if (describe) return 'gift';
+    if (comment) return 'comment';
+
+    return 'comment';
   };
 
   const formatEvent = e => {
-    const name = e.nickname || e.user?.nickname || 'Unknown';
-    const id   = e.uniqueId || e.user?.uniqueId    || 'Unknown';
-    if (e.comment) return `${id} | ${name} | ${e.comment}`;
-    if (e.common?.describe)
-      return `${id} | ${name} | sent "${e.common.describe}"`;
-    return `${id} | ${name} | subscribed!`;
+    const data = e.data || e;
+    const name = data.nickname || data.user?.nickname || 'Unknown';
+    const id   = data.uniqueId || data.user?.uniqueId || 'Unknown';
+    const comment  = data.comment;
+    const describe = data.common?.describe;
+    const type = getEventType(e);
+
+    if (type === 'subscription') return `${id} | ${name} | 🎉 Subscribed!`;
+    if (type === 'gift') return `${id} | ${name} | sent "${describe}"`;
+    if (type === 'comment') return `${id} | ${name} | ${comment}`;
+    return `${id} | ${name} | Event`;
+  };
+
+  const handleFilterChange = type => {
+    const active = Object.values(filters).filter(Boolean).length;
+    if (filters[type] && active === 1) return;
+    setFilters(f => ({ ...f, [type]: !f[type] }));
   };
 
   return (
-    <div
-      style={{
-        height:          '100vh',
-        display:         'flex',
-        flexDirection:   'column',
-        fontFamily:      'sans-serif',
-        backgroundColor: theme === 'dark' ? '#121212' : '#f5f5f5',
-        color:           theme === 'dark' ? '#e0e0e0' : '#000'
-      }}
-    >
-      {/* HEADER & CONTROLS */}
-      <div
-        style={{
-          padding:         '1rem',
-          borderBottom:    '1px solid #ccc',
-          position:        'sticky',
-          top:             0,
-          backgroundColor: theme === 'dark' ? '#1e1e1e' : '#fff',
-          zIndex:          10
-        }}
-      >
+    <div style={{
+      height: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      fontFamily: 'sans-serif',
+      backgroundColor: theme === 'dark' ? '#121212' : '#f5f5f5',
+      color: theme === 'dark' ? '#e0e0e0' : '#000'
+    }}>
+      <div style={{
+        padding: '1rem',
+        borderBottom: '1px solid #ccc',
+        position: 'sticky',
+        top: 0,
+        backgroundColor: theme === 'dark' ? '#1e1e1e' : '#fff',
+        zIndex: 10
+      }}>
         <h2>TikTok Live Monitor</h2>
 
         <input
@@ -150,153 +232,205 @@ export default function App() {
           placeholder="TikTok Username"
           style={{ marginRight: '0.5rem' }}
         />
-
         <button onClick={startMonitoring}>Start</button>
-
-        <button onClick={togglePause} style={{ marginLeft: '0.5rem' }}>
-          {paused ? 'Resume' : 'Pause'}
+        <button onClick={togglePause} style={{ marginLeft: '0.5rem' }}>{paused ? 'Resume' : 'Pause'}</button>
+        <button onClick={toggleSlowMode} style={{ marginLeft: '0.5rem' }}>{slowMode ? 'Normal Speed' : 'Slow Mode'}</button>
+        <button onClick={toggleTheme} style={{ marginLeft: '0.5rem' }}>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</button>
+        <button onClick={() => setShowPinsDialog(true)} style={{ marginLeft: '0.5rem' }}>
+          View Pinned Messages
         </button>
 
-        <button onClick={toggleSlowMode} style={{ marginLeft: '0.5rem' }}>
-          {slowMode ? 'Normal Speed' : 'Slow Mode'}
-        </button>
+        <div style={{ marginTop: '1rem' }}>
+          <strong>Filter:</strong>
+          {['comment', 'gift', 'subscription'].map(type => (
+            <label key={type} style={{ marginLeft: '1rem' }}>
+              <input
+                type="checkbox"
+                checked={filters[type]}
+                onChange={() => handleFilterChange(type)}
+              />
+              {' '}{type.charAt(0).toUpperCase() + type.slice(1)}
+            </label>
+          ))}
+        </div>
+      </div>
 
-        <button onClick={toggleTheme} style={{ marginLeft: '0.5rem' }}>
-          {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-        </button>
-
-        {/* PINNED ITEMS + COPY */}
-        {pinnedItems.length > 0 && (
-          <div
+      <div style={{ flex: 1, padding: '1rem', position: 'relative' }}>
+        <div
+          style={{
+            height: 'calc(100vh - 220px)',
+            overflowY: 'auto',
+            border: theme === 'dark' ? '1px solid #444' : '1px solid #ccc',
+            borderRadius: '6px'
+          }}
+          ref={scrollRef}
+        >
+          <table
             style={{
-              marginTop: '1rem',
-              display:   'flex',
-              flexWrap:  'wrap',
-              gap:       '0.5rem'
+              width: '100%',
+              tableLayout: 'auto',
+              borderCollapse: 'separate',
+              borderSpacing: '5px 6px'
             }}
           >
-            {pinnedItems.map(pin => (
-              <div
-                key={pin.index}
-                style={{
-                  padding:         '0.5rem',
-                  backgroundColor: theme === 'dark' ? '#333' : '#eee',
-                  border:          '1px solid #888',
-                  display:         'flex',
-                  alignItems:      'center',
-                  gap:             '0.5rem'
-                }}
-              >
-                <button
-                  onClick={() =>
-                    setPinnedItems(prev =>
-                      prev.filter(x => x.index !== pin.index)
-                    )
-                  }
-                  title="Unpin"
-                  style={{
-                    background: 'none',
-                    border:     'none',
-                    padding:    0,
-                    cursor:     'pointer',
-                    color:      '#f39c12',
-                    fontSize:   '20px'
-                  }}
-                >
-                  <span className="material-icons">close</span>
-                </button>
+            <colgroup>
+              <col style={{ width: '40px' }} />
+              <col />
+              <col />
+              <col style={{ minWidth: '300px' }} />
+            </colgroup>
 
-                <span>{formatEvent(pin.data)}</span>
+            <thead>
+			  <tr style={{
+				position: 'sticky',
+				top: 0,
+				backgroundColor: '#800080',
+				zIndex: 5,
+				borderBottom: '2px solid #aaa',
+				boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+			  }}>
+				<th style={{ fontSize: '18px' }}></th>
+				<th style={{ textAlign: 'left', fontSize: '18px' }}>Unique ID</th>
+				<th style={{ textAlign: 'left', fontSize: '18px' }}>Screen Name</th>
+				<th style={{ textAlign: 'left', fontSize: '18px' }}>Message</th>
+			  </tr>
+			</thead>
 
-                <button
-                  onClick={() =>
-                    navigator.clipboard.writeText(formatEvent(pin.data))
-                  }
-                  title="Copy pinned text"
-                  style={{
-                    background: 'none',
-                    border:     'none',
-                    padding:    0,
-                    cursor:     'pointer',
-                    color:      '#3498db',
-                    fontSize:   '18px'
-                  }}
-                >
-                  <span className="material-icons">content_copy</span>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+            <tbody>
+              {events
+                .filter(e => filters[getEventType(e)] ?? true)
+                .map((e, i) => {
+                  const { uniqueId, nickname } = e.data;
+                  const id = uniqueId || e.data.user?.uniqueId || 'unknown';
+                  const isPinned = pinnedItems.some(p => p.index === i);
+                  const message = formatEvent(e);
 
-      {/* EVENTS TABLE */}
-      <div
-        style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}
-        ref={scrollRef}
-      >
-        <table
-          style={{
-            width:          '100%',
-            borderCollapse: 'collapse',
-            tableLayout:    'fixed'
-          }}
-        >
-          <colgroup>
-            <col style={{ width: '40px' }} />
-            <col style={{ width: '100px' }} />
-            <col style={{ width: '150px' }} />
-            <col style={{ width: '150px' }} />
-            <col />
-          </colgroup>
-          <thead>
-            <tr>
-              <th></th>
-              <th style={{ textAlign: 'left' }}>Type</th>
-              <th style={{ textAlign: 'left' }}>Unique ID</th>
-              <th style={{ textAlign: 'left' }}>Screen Name</th>
-              <th style={{ textAlign: 'left' }}>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            {events.map((e, i) => {
-              const { uniqueId, nickname, comment, common } = e.data;
-              const id       = uniqueId || e.data.user?.uniqueId || 'unknown';
-              const isPinned = pinnedItems.some(p => p.index === i);
-              const message  = comment || common?.describe || 'Subscribed!';
-
-              return (
-                <tr key={i}>
-                  <td>
-                    <button
-                      onClick={() => pinComment(e, i)}
-                      title={isPinned ? 'Unpin comment' : 'Pin comment'}
+                  return (
+                    <tr
+                      key={i}
                       style={{
-                        background: 'none',
-                        border:     'none',
-                        padding:    0,
-                        cursor:     'pointer',
-                        color:      isPinned ? '#f39c12' : '#3498db',
-                        fontSize:   '20px',
-                        transform:  isPinned ? 'rotate(45deg)' : 'none',
-                        transition:'transform 0.2s ease, color 0.2s ease'
+                        backgroundColor: getEventType(e) === 'subscription'
+                          ? (theme === 'dark' ? '#2c3e50' : '#dff9fb')
+                          : theme === 'dark' ? '#1a1a1a' : '#fff',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                        borderRadius: '4px'
                       }}
                     >
-                      <span className="material-icons">push_pin</span>
-                    </button>
-                  </td>
-                  <td style={{ textAlign: 'left' }}>{e.type}</td>
-                  <td style={{ textAlign: 'left' }}>{id}</td>
-                  <td style={{ textAlign: 'left' }}>
-                    {nickname || e.data.user?.nickname || 'Unknown'}
-                  </td>
-                  <td style={{ textAlign: 'left' }}>{message}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      <td style={{ padding: '10px 6px' }}>
+                        <button
+                          onClick={() => pinComment(e, i)}
+                          title={isPinned ? 'Unpin comment' : 'Pin comment'}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            cursor: 'pointer',
+                            color: isPinned ? '#f39c12' : '#3498db',
+                            fontSize: '20px',
+                            transform: isPinned ? 'rotate(45deg)' : 'none',
+                            transition: 'transform 0.2s ease, color 0.2s ease'
+                          }}
+                        >
+                          <span className="material-icons">push_pin</span>
+                        </button>
+                      </td>
+                      <td style={{ textAlign: 'left', padding: '10px 6px' }}>{id}</td>
+                      <td style={{ textAlign: 'left', padding: '10px 6px' }}>{nickname || e.data.user?.nickname || 'Unknown'}</td>
+                      <td style={{ textAlign: 'left', padding: '10px 6px', wordBreak: 'break-word' }}>{message}</td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
       </div>
+
+      {/* Pinned Messages Dialog */}
+      {showPinsDialog && (
+        <div style={{
+          position: 'fixed',
+          top: '10%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '80%',
+          maxHeight: '70vh',
+          backgroundColor: theme === 'dark' ? '#1e1e1e' : '#fff',
+          border: '1px solid #aaa',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          zIndex: 1000,
+          padding: '1rem',
+          overflowY: 'auto',
+		  resize: 'both',
+		  overflow: 'auto'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+			<h3>Pinned Messages</h3>
+			<button onClick={() => {setShowPinsDialog(false); setUserClosedDialog(true); }}>Close</button>
+          </div>
+		  <div style={{ display: 'flex', justifyContent: 'left', marginBottom: '1rem' }}>
+			<button onClick={() => {setPinnedItems([]); }}>Clear All</button>
+		  </div>
+          <table
+            style={{
+              width: '100%',
+              tableLayout: 'auto',
+              borderCollapse: 'separate',
+              borderSpacing: '0 6px'
+            }}
+          >
+            <colgroup>
+              <col style={{ width: '40px' }} />
+              <col />
+              <col />
+              <col style={{ minWidth: '300px' }} />
+            </colgroup>
+
+            <tbody>
+              {pinnedItems.map(pin => {
+                const { uniqueId, nickname, comment, common, user } = pin.event.data;
+                const id = uniqueId || user?.uniqueId || 'unknown';
+                const name = nickname || user?.nickname || 'Unknown';
+                const type = getEventType(pin.event);
+                const message = formatEvent(pin.event);
+
+                return (
+                  <tr
+                    key={pin.index}
+                    style={{
+                      backgroundColor: type === 'subscription'
+                        ? (theme === 'dark' ? '#2c3e50' : '#dff9fb')
+                        : theme === 'dark' ? '#1a1a1a' : '#fff',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                      borderRadius: '4px'
+                    }}
+                  >
+                    <td style={{ padding: '10px 6px' }}>
+                      <button
+                        onClick={() => setPinnedItems(prev => prev.filter(x => x.index !== pin.index))}
+                        title="Unpin"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          cursor: 'pointer',
+                          color: '#f39c12',
+                          fontSize: '20px'
+                        }}
+                      >
+                        <span className="material-icons">close</span>
+                      </button>
+                    </td>
+                    <td style={{ textAlign: 'left', padding: '10px 6px' }}>{id}</td>
+                    <td style={{ textAlign: 'left', padding: '10px 6px' }}>{name}</td>
+                    <td style={{ textAlign: 'left', padding: '10px 6px', wordBreak: 'break-word' }}>{message}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
