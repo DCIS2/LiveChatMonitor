@@ -6,15 +6,17 @@
   "author": "DCI2S LLC",
   "license": "MIT",
   "scripts": {
-	  "dev": "concurrently \"vite\" \"electron .\"",
-	  "build": "vite build",
-	  "start": "electron .",
-	  "dist": "electron-builder",
-	  "dist:win": "electron-builder --win --x64",
-	  "dist:mac": "electron-builder --mac --x64 --arm64",
-	  "dist:linux": "electron-builder --linux --x64"
+    "dev": "concurrently \"vite\" \"electron .\"",
+    "build": "vite build",
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win --x64",
+    "dist:mac": "electron-builder --mac --x64 --arm64",
+    "dist:linux": "electron-builder --linux --x64"
   },
   "dependencies": {
+    "@mui/icons-material": "^7.3.2",
+    "@mui/material": "^7.3.2",
     "electron-is-dev": "^2.0.0",
     "electron-store": "^8.0.0",
     "node-fetch": "^2.6.1",
@@ -26,7 +28,9 @@
     "@vitejs/plugin-react": "^5.0.1",
     "electron": "^24.2.0",
     "electron-builder": "^24.6.0",
+    "electron-packager": "^17.1.2",
     "vite": "^4.0.0",
+    "vite-plugin-commonjs": "^0.10.4",
     "vite-plugin-react": "^3.0.0"
   },
   "build": {
